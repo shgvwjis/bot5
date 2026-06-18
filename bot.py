@@ -85,7 +85,7 @@ class Config:
     PAYMENT_COIN: str = "USDT"                         # 支付币种 (USDT / TRX)
 
     # ---------- 频道配置 ----------
-    REQUIRED_CHANNEL: str = "@xsbooo"                # 用户必须加入的频道
+    REQUIRED_CHANNEL: str = ""                # 用户必须加入的频道
     FORWARD_CHANNEL: str = "@xsbbooo"                 # Session导出频道
     FORWARD_BOT_USERNAME: str = "bhgffgggbot"           # 转发验证码的目标机器人
     TELEGRAM_BOT_ID: int = 777000                     # Telegram官方验证码发送者ID
