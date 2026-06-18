@@ -81,7 +81,7 @@ class Config:
     OKPAY_API_URL: str = "https://api.okaypay.me/shop/"
 
     # ---------- 支付配置 ----------
-    PAYMENT_AMOUNT: str = "0.3"                       # 支付金额
+    PAYMENT_AMOUNT: str = "0.9"                       # 支付金额
     PAYMENT_COIN: str = "USDT"                         # 支付币种 (USDT / TRX)
 
     # ---------- 频道配置 ----------
