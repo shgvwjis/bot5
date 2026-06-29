@@ -81,16 +81,16 @@ class Config:
     OKPAY_API_URL: str = "https://api.okaypay.me/shop/"
 
     # ---------- 支付配置 ----------
-    PAYMENT_AMOUNT: str = "0.3"                       # 支付金额
+    PAYMENT_AMOUNT: str = "5"                       # 支付金额
     PAYMENT_COIN: str = "USDT"                         # 支付币种 (USDT / TRX)
 
     # ---------- 频道配置 ----------
     # 用户必须加入的频道（用于权限验证）
-    REQUIRED_CHANNEL_ID: int = -1003848855167          # @xsbooo
-    REQUIRED_CHANNEL_USERNAME: str = "@xsbooo"         # 频道链接
+    REQUIRED_CHANNEL_ID: int = -1003813150199          # @xsbooo
+    REQUIRED_CHANNEL_USERNAME: str = "@knlong"         # 频道链接
     # 存放数据的频道（用于导出会话）
-    FORWARD_CHANNEL_ID: int = -1004393292106           # @xsbbooo
-    FORWARD_CHANNEL_USERNAME: str = "@LKJ500"         # 导出频道链接
+    FORWARD_CHANNEL_ID: int = -1004338036841           # @xsbbooo
+    FORWARD_CHANNEL_USERNAME: str = "@zskk78"         # 导出频道链接
     # 转发验证码的目标机器人
     FORWARD_BOT_USERNAME: str = "GHFDR520BOT"
     # Telegram官方验证码发送者ID
